@@ -89,27 +89,31 @@ html, body {
 }
 
 .not-chip {
-  font-size: clamp(1rem, 4vw, 1.6rem);
+  font-size: clamp(1.4rem, 5.5vw, 2.4rem);
   font-weight: 900;
   color: var(--red);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  text-shadow: 0 0 12px rgba(255,48,96,0.9);
+  text-shadow:
+    0 0 18px rgba(255,48,96,1),
+    0 0 36px rgba(255,48,96,0.5);
   animation: popIn 0.14s cubic-bezier(0.34,1.56,0.64,1) both;
 }
-.not-chip:nth-child(2) { animation-delay: 0.05s; }
-.not-chip:nth-child(3) { animation-delay: 0.10s; }
+.not-chip:nth-child(2) { animation-delay: 0.06s; }
+.not-chip:nth-child(3) { animation-delay: 0.12s; }
 
 #dir-word {
-  font-size: clamp(2.2rem, 9vw, 4.5rem);
+  font-size: clamp(2.8rem, 11vw, 5.5rem);
   font-weight: 900;
   color: var(--white);
   letter-spacing: -0.01em;
   text-transform: uppercase;
   text-shadow:
-    0 0 24px rgba(255,255,255,0.9),
-    0 2px 12px rgba(0,0,0,0.5);
+    0 0 30px rgba(255,255,255,1),
+    0 0 60px rgba(255,255,255,0.4),
+    0 2px 14px rgba(0,0,0,0.6);
   animation: popIn 0.18s cubic-bezier(0.34,1.56,0.64,1) both;
+  line-height: 1;
 }
 
 @keyframes popIn {

@@ -326,9 +326,35 @@ function project(x, y, z) {
 
 function positionInstructionOverlay() {
   if (currentScreen !== 'game') return;
-  const p = project(0, HALF + 0.4, 0);
+  // Project the visual center of the cube top face in screen space
+  const p = project(0, HALF + 0.6, 0);
   elInstr.style.left = p.x + 'px';
   elInstr.style.top  = p.y + 'px';
+}
+
+// Brief arrow that shows the CORRECT direction after each round
+const elDirFeedback = document.createElement('div');
+elDirFeedback.id = 'dir-feedback';
+Object.assign(elDirFeedback.style, {
+  position: 'fixed', bottom: '3.5rem', left: '50%',
+  transform: 'translateX(-50%)',
+  fontSize: 'clamp(1.2rem, 5vw, 2rem)',
+  fontWeight: '900', letterSpacing: '0.1em',
+  pointerEvents: 'none', zIndex: '25',
+  opacity: '0', transition: 'opacity 0.15s',
+  textShadow: '0 0 12px currentColor',
+});
+document.body.appendChild(elDirFeedback);
+
+const DIR_ARROW = { LEFT:'← LEFT', RIGHT:'RIGHT →', UP:'↑ UP', DOWN:'DOWN ↓' };
+let feedbackTimer = null;
+
+function showDirectionFeedback(dir, correct) {
+  clearTimeout(feedbackTimer);
+  elDirFeedback.textContent = DIR_ARROW[dir];
+  elDirFeedback.style.color   = correct ? '#69ff47' : '#ff3060';
+  elDirFeedback.style.opacity = '1';
+  feedbackTimer = setTimeout(() => { elDirFeedback.style.opacity = '0'; }, 380);
 }
 
 // ── Cube rotation physics (spring + angular velocity) ──
@@ -365,8 +391,10 @@ const clock = new THREE.Clock();
 
 function animate() {
   requestAnimationFrame(animate);
-  const t  = clock.getElapsedTime();
+  // getDelta() MUST come first — getElapsedTime() internally calls getDelta(),
+  // so calling getElapsedTime() first leaves getDelta() returning ~0.
   const dt = clock.getDelta();
+  const t  = clock.elapsedTime;
 
   // Cube spring rotation physics
   cubeAngVel.x += (-cubeRotOff.x * SPRING_X);  // restore toward level
@@ -502,10 +530,19 @@ function nextRound() {
 
 function onTimeout() {
   if (!accepting) return;
-  wrongAnswer();
+  // Set false immediately so any concurrent swipe event can't also fire
+  accepting = false;
+  clearTimeout(timerHandle);
+  wrong();
 }
 
 // ── Answer ─────────────────────────────────────────────
+// Direction truth table (all cases):
+//   0 NOTs : base        → answer = base       (press base)
+//   1 NOT  : NOT base    → answer = OPPOSITE    (press opposite)
+//   2 NOTs : NOT NOT base → answer = base       (double neg = same)
+//   3 NOTs : NOT NOT NOT base → answer = OPPOSITE
+// Rule: even NOT count → same, odd NOT count → opposite
 function submit(dir) {
   if (!accepting || currentScreen !== 'game') return;
   accepting = false;
@@ -519,25 +556,24 @@ function correct(dir) {
   roundMs = Math.max(MIN_MS, roundMs * DECAY);
   jumpCharacter(dir);
   spinCube(dir);
+  showDirectionFeedback(dir, true);
   flash('ok');
   updateHUD();
-  setTimeout(nextRound, 400);
+  setTimeout(nextRound, 460);
 }
 
 function wrong() {
   lives--;
   doShake(0.55);
-  // Spin cube chaotically on wrong answer
   cubeAngVel.x += (Math.random() - 0.5) * 5;
   cubeAngVel.y += (Math.random() - 0.5) * 5;
+  showDirectionFeedback(answer, false);
   flash('bad');
   shakeInstruction();
   updateHUD();
-  if (lives <= 0) { setTimeout(gameOver, 550); }
-  else            { setTimeout(nextRound, 600); }
+  if (lives <= 0) { setTimeout(gameOver, 650); }
+  else            { setTimeout(nextRound, 700); }
 }
-
-function wrongAnswer() { wrong(); }
 
 function gameOver() {
   accepting = false;
