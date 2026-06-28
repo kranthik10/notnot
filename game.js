@@ -76,20 +76,82 @@ const fill = new THREE.DirectionalLight(0xfff0e0, 0.3);
 fill.position.set(6, 4, 8);
 scene.add(fill);
 
+// ── Cube texture (canvas-generated dark panel look) ────
+function buildFaceTex(size = 512) {
+  const cv  = document.createElement('canvas');
+  cv.width  = size;
+  cv.height = size;
+  const c   = cv.getContext('2d');
+
+  // Deep dark base
+  c.fillStyle = '#0d0d18';
+  c.fillRect(0, 0, size, size);
+
+  // Subtle center radial glow
+  const rad = c.createRadialGradient(size/2,size/2,0, size/2,size/2,size*0.52);
+  rad.addColorStop(0,   'rgba(255,255,255,0.055)');
+  rad.addColorStop(0.5, 'rgba(255,255,255,0.018)');
+  rad.addColorStop(1,   'rgba(0,0,0,0)');
+  c.fillStyle = rad;
+  c.fillRect(0, 0, size, size);
+
+  // Outer border
+  c.strokeStyle = 'rgba(255,255,255,0.22)';
+  c.lineWidth   = 4;
+  c.strokeRect(5, 5, size-10, size-10);
+
+  // Inner panel inset
+  const pad = Math.round(size * 0.07);
+  c.strokeStyle = 'rgba(255,255,255,0.07)';
+  c.lineWidth   = 1.5;
+  c.strokeRect(pad, pad, size-pad*2, size-pad*2);
+
+  // Corner L-brackets
+  const cs = Math.round(size * 0.1);
+  c.strokeStyle = 'rgba(255,255,255,0.32)';
+  c.lineWidth   = 2.5;
+  c.lineCap     = 'round';
+  [
+    [pad, pad,       1,  1],
+    [size-pad, pad,  -1,  1],
+    [pad, size-pad,   1, -1],
+    [size-pad, size-pad, -1, -1],
+  ].forEach(([x, y, sx, sy]) => {
+    c.beginPath();
+    c.moveTo(x + sx*cs, y);
+    c.lineTo(x, y);
+    c.lineTo(x, y + sy*cs);
+    c.stroke();
+  });
+
+  // Faint diagonal texture lines
+  c.strokeStyle = 'rgba(255,255,255,0.012)';
+  c.lineWidth   = 1;
+  for (let i = -size; i < size*2; i += 28) {
+    c.beginPath();
+    c.moveTo(i, 0);
+    c.lineTo(i + size, size);
+    c.stroke();
+  }
+
+  return new THREE.CanvasTexture(cv);
+}
+
 // ── Cube ───────────────────────────────────────────────
 const HALF = 2.5;
+const faceTex = buildFaceTex(512);
 const cubeMat = new THREE.MeshStandardMaterial({
-  color: 0x111118,
-  roughness: 0.18,
-  metalness: 0.55,
-  envMapIntensity: 1,
+  color:    0x1a1a24,
+  map:      faceTex,
+  roughness: 0.14,
+  metalness: 0.6,
 });
 const cube = new THREE.Mesh(
   new THREE.BoxGeometry(HALF*2, HALF*2, HALF*2),
   cubeMat
 );
 cube.receiveShadow = true;
-cube.castShadow = true;
+cube.castShadow    = true;
 scene.add(cube);
 
 // ── Beam / God-ray effect ─────────────────────────────
@@ -269,6 +331,23 @@ function positionInstructionOverlay() {
   elInstr.style.top  = p.y + 'px';
 }
 
+// ── Cube rotation physics (spring + angular velocity) ──
+const cubeAngVel = { x: 0, y: 0 };
+const cubeRotOff = { x: 0, y: 0 };
+const SPIN_IMPULSE = 4.2;
+const SPIN_DAMP    = 0.87;
+const SPRING_X     = 0.09;  // restoring force (tilt back to level)
+const SPRING_Y     = 0.035; // weaker around vertical axis
+
+function spinCube(dir) {
+  switch (dir) {
+    case 'LEFT':  cubeAngVel.y -= SPIN_IMPULSE; break;
+    case 'RIGHT': cubeAngVel.y += SPIN_IMPULSE; break;
+    case 'UP':    cubeAngVel.x -= SPIN_IMPULSE; break;
+    case 'DOWN':  cubeAngVel.x += SPIN_IMPULSE; break;
+  }
+}
+
 // ── Character bob & jump ──────────────────────────────
 let charVx = 0, charVz = 0;
 const BASE_CHAR_Y = HALF;
@@ -289,8 +368,15 @@ function animate() {
   const t  = clock.getElapsedTime();
   const dt = clock.getDelta();
 
-  // Cube gentle drift
-  cube.rotation.y = Math.sin(t * 0.18) * 0.04;
+  // Cube spring rotation physics
+  cubeAngVel.x += (-cubeRotOff.x * SPRING_X);  // restore toward level
+  cubeAngVel.y += (-cubeRotOff.y * SPRING_Y);
+  cubeAngVel.x *= SPIN_DAMP;
+  cubeAngVel.y *= SPIN_DAMP;
+  cubeRotOff.x += cubeAngVel.x * Math.min(dt, 0.05);
+  cubeRotOff.y += cubeAngVel.y * Math.min(dt, 0.05);
+  cube.rotation.x = cubeRotOff.x;
+  cube.rotation.y = cubeRotOff.y;
 
   // Character bob
   character.position.y = BASE_CHAR_Y + Math.sin(t * 2.4) * 0.06;
@@ -432,6 +518,7 @@ function correct(dir) {
   score++;
   roundMs = Math.max(MIN_MS, roundMs * DECAY);
   jumpCharacter(dir);
+  spinCube(dir);
   flash('ok');
   updateHUD();
   setTimeout(nextRound, 400);
@@ -440,6 +527,9 @@ function correct(dir) {
 function wrong() {
   lives--;
   doShake(0.55);
+  // Spin cube chaotically on wrong answer
+  cubeAngVel.x += (Math.random() - 0.5) * 5;
+  cubeAngVel.y += (Math.random() - 0.5) * 5;
   flash('bad');
   shakeInstruction();
   updateHUD();
