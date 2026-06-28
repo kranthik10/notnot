@@ -1,65 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
   <title>Not Not</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
   <canvas id="bg"></canvas>
 
-  <!-- SCREENS -->
+  <!-- ── HUD (always on top during game) ── -->
+  <div id="hud" class="hidden">
+    <div id="lives-row">
+      <span id="h1" class="heart">♥</span>
+      <span id="h2" class="heart">♥</span>
+      <span id="h3" class="heart">♥</span>
+    </div>
+    <div id="score-display">0</div>
+  </div>
+
+  <!-- ── Instruction overlay (projected onto cube top) ── -->
+  <div id="instruction" class="hidden">
+    <div id="nots-row"></div>
+    <div id="dir-word"></div>
+  </div>
+
+  <!-- ── Feedback flash ── -->
+  <div id="flash"></div>
+
+  <!-- ── Start Screen ── -->
   <div id="screen-start" class="screen active">
-    <div class="title-wrap">
-      <h1 class="game-title">NOT<br>NOT</h1>
-      <p class="subtitle">Think fast. Negate the negations.</p>
+    <div class="logo-wrap">
+      <div class="logo-not">NOT</div>
+      <div class="logo-not">NOT</div>
     </div>
-    <button id="btn-start" class="btn-primary">PLAY</button>
-    <div class="how-to">
-      <p>Swipe or press <kbd>←</kbd><kbd>→</kbd><kbd>↑</kbd><kbd>↓</kbd></p>
-      <p>in the <em>correct</em> direction after resolving all "Not"s</p>
-    </div>
+    <p class="tagline">SWIPE THE RIGHT WAY</p>
+    <button id="btn-play" class="cta">TAP TO PLAY</button>
+    <p class="hint-text">← Swipe to move the character →<br>Resolve all NOT prefixes first</p>
   </div>
 
-  <div id="screen-game" class="screen">
-    <div id="hud">
-      <div id="score-wrap">
-        <span class="hud-label">SCORE</span>
-        <span id="score">0</span>
-      </div>
-      <div id="lives-wrap">
-        <span id="life1" class="life">♥</span>
-        <span id="life2" class="life">♥</span>
-        <span id="life3" class="life">♥</span>
-      </div>
-      <div id="combo-wrap">
-        <span class="hud-label">COMBO</span>
-        <span id="combo">x1</span>
-      </div>
-    </div>
-    <div id="timer-bar-wrap"><div id="timer-bar"></div></div>
-
-    <div id="instruction-area">
-      <div id="not-prefixes"></div>
-      <div id="direction-word"></div>
-    </div>
-
-    <div id="feedback-overlay"></div>
-  </div>
-
+  <!-- ── Game Over Screen ── -->
   <div id="screen-over" class="screen">
-    <h2 class="over-title">GAME OVER</h2>
-    <div class="final-score-wrap">
-      <p class="final-label">SCORE</p>
-      <p id="final-score" class="final-score">0</p>
+    <p class="over-label">GAME OVER</p>
+    <div class="score-block">
+      <span class="sb-label">SCORE</span>
+      <span id="over-score" class="sb-num">0</span>
     </div>
-    <div class="final-score-wrap" style="margin-top:0.5rem">
-      <p class="final-label">BEST</p>
-      <p id="best-score" class="final-score">0</p>
+    <div class="score-block">
+      <span class="sb-label">BEST</span>
+      <span id="over-best" class="sb-num gold">0</span>
     </div>
-    <button id="btn-restart" class="btn-primary">PLAY AGAIN</button>
-    <button id="btn-menu" class="btn-secondary">MENU</button>
+    <button id="btn-retry" class="cta">PLAY AGAIN</button>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>

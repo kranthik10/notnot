@@ -1,506 +1,534 @@
 /* ═══════════════════════════════════════════════════
-   NOT NOT  –  Three.js puzzle game
+   NOT NOT  –  Isometric Three.js puzzle game
    ═══════════════════════════════════════════════════ */
 
 // ── Constants ──────────────────────────────────────────
-const DIRECTIONS = ['LEFT', 'RIGHT', 'UP', 'DOWN'];
-const OPPOSITES  = { LEFT: 'RIGHT', RIGHT: 'LEFT', UP: 'DOWN', DOWN: 'UP' };
-const DIR_ARROW  = { LEFT: '←', RIGHT: '→', UP: '↑', DOWN: '↓' };
-const COLORS     = {
-  LEFT:  0x40c4ff,
-  RIGHT: 0xe040fb,
-  UP:    0x69ff47,
-  DOWN:  0xff6d00,
-};
-
-const MAX_LIVES       = 3;
-const BASE_TIME       = 3000;   // ms for round 1
-const MIN_TIME        = 900;    // ms floor
-const TIME_DECAY      = 0.97;   // multiply per correct answer
-const COMBO_THRESHOLD = 3;      // every N correct = combo bonus
+const DIRS      = ['LEFT','RIGHT','UP','DOWN'];
+const OPPOSITE  = { LEFT:'RIGHT', RIGHT:'LEFT', UP:'DOWN', DOWN:'UP' };
+const MAX_LIVES = 3;
+const BASE_MS   = 2800;
+const MIN_MS    = 750;
+const DECAY     = 0.965;
 
 // ── State ──────────────────────────────────────────────
-let state = {
-  screen: 'start',   // start | game | over
-  score: 0,
-  best: 0,
-  lives: MAX_LIVES,
-  combo: 1,
-  streak: 0,
-  roundTime: BASE_TIME,
-  timerStart: 0,
-  timerHandle: null,
-  answer: null,       // correct direction string
-  accepting: false,
-};
+let score=0, best=0, lives=MAX_LIVES, roundMs=BASE_MS;
+let answer=null, accepting=false, timerStart=0, timerHandle=null;
+let currentScreen='start';
 
-// ── DOM refs ───────────────────────────────────────────
+// ── DOM ────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const screens = {
-  start: $('screen-start'),
-  game:  $('screen-game'),
-  over:  $('screen-over'),
-};
+const elHUD     = $('hud');
+const elInstr   = $('instruction');
+const elNots    = $('nots-row');
+const elDir     = $('dir-word');
+const elFlash   = $('flash');
+const elScore   = $('score-display');
+const elOverScr = $('over-score');
+const elOverBst = $('over-best');
+const heartEls  = [$('h1'),$('h2'),$('h3')];
+const scrStart  = $('screen-start');
+const scrOver   = $('screen-over');
 
-const elScore      = $('score');
-const elCombo      = $('combo');
-const elFinalScore = $('final-score');
-const elBestScore  = $('best-score');
-const elTimerBar   = $('timer-bar');
-const elNots       = $('not-prefixes');
-const elDir        = $('direction-word');
-const elFeedback   = $('feedback-overlay');
-const lifeEls      = [$('life1'), $('life2'), $('life3')];
-
-$('btn-start').addEventListener('click',   startGame);
-$('btn-restart').addEventListener('click', startGame);
-$('btn-menu').addEventListener('click',    showStart);
+$('btn-play').addEventListener('click',  startGame);
+$('btn-retry').addEventListener('click', startGame);
 
 // ═══════════════════════════════════════════════════════
-//  THREE.JS BACKGROUND
+//  THREE.JS SCENE
 // ═══════════════════════════════════════════════════════
 const canvas   = $('bg');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setClearColor(0x0a0a12);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setClearColor(0x000000, 0);
 
 const scene  = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
-camera.position.set(0, 0, 18);
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 300);
+camera.position.set(0, 14, 12);
+camera.lookAt(0, 0.5, 0);
 
-// Ambient + directional light
-scene.add(new THREE.AmbientLight(0xffffff, 0.15));
-const dirLight = new THREE.DirectionalLight(0xe040fb, 1.2);
-dirLight.position.set(5, 8, 6);
-scene.add(dirLight);
-const dirLight2 = new THREE.DirectionalLight(0x40c4ff, 0.8);
-dirLight2.position.set(-5, -4, 3);
-scene.add(dirLight2);
-
-// ── Central 3D object ──────────────────────────────────
-const boxGeo  = new THREE.BoxGeometry(2.8, 2.8, 2.8, 4, 4, 4);
-const boxMat  = new THREE.MeshStandardMaterial({
-  color: 0xe040fb,
-  emissive: 0x500070,
-  roughness: 0.3,
-  metalness: 0.7,
-  wireframe: false,
-});
-const mainCube = new THREE.Mesh(boxGeo, boxMat);
-scene.add(mainCube);
-
-// Wireframe overlay
-const wireMat  = new THREE.MeshBasicMaterial({ color: 0xffffff, wireframe: true, transparent: true, opacity: 0.08 });
-const wireMesh = new THREE.Mesh(boxGeo, wireMat);
-mainCube.add(wireMesh);
-
-// ── Floating particles ─────────────────────────────────
-const particleCount = 280;
-const pPositions    = new Float32Array(particleCount * 3);
-const pColors       = new Float32Array(particleCount * 3);
-const pSpeeds       = [];
-
-for (let i = 0; i < particleCount; i++) {
-  const theta = Math.random() * Math.PI * 2;
-  const phi   = Math.acos(2 * Math.random() - 1);
-  const r     = 6 + Math.random() * 10;
-  pPositions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-  pPositions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
-  pPositions[i * 3 + 2] = r * Math.cos(phi);
-  const c = new THREE.Color().setHSL(Math.random(), 0.9, 0.65);
-  pColors[i * 3]     = c.r;
-  pColors[i * 3 + 1] = c.g;
-  pColors[i * 3 + 2] = c.b;
-  pSpeeds.push((Math.random() - 0.5) * 0.008);
-}
-
-const pGeo  = new THREE.BufferGeometry();
-pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
-pGeo.setAttribute('color',    new THREE.BufferAttribute(pColors, 3));
-const pMat  = new THREE.PointsMaterial({ size: 0.12, vertexColors: true, transparent: true, opacity: 0.85 });
-const points = new THREE.Points(pGeo, pMat);
-scene.add(points);
-
-// ── Ring decorations ───────────────────────────────────
-function makeRing(radius, tube, color) {
-  const geo = new THREE.TorusGeometry(radius, tube, 8, 60);
-  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18 });
-  return new THREE.Mesh(geo, mat);
-}
-const ring1 = makeRing(5.5, 0.035, 0xe040fb); ring1.rotation.x = Math.PI / 3; scene.add(ring1);
-const ring2 = makeRing(7.0, 0.025, 0x40c4ff); ring2.rotation.y = Math.PI / 4; scene.add(ring2);
-const ring3 = makeRing(8.5, 0.02,  0x69ff47); ring3.rotation.z = Math.PI / 6; scene.add(ring3);
-
-// ── Resize handler ─────────────────────────────────────
+// Resize
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  positionInstructionOverlay();
 }
 window.addEventListener('resize', onResize);
-onResize();
 
-// ── Camera shake state ─────────────────────────────────
-let shakeMag = 0;
-let shakeDecay = 0.88;
+// ── Lighting ───────────────────────────────────────────
+// Dim ambient
+scene.add(new THREE.AmbientLight(0x8bbccc, 0.5));
 
-function triggerShake(mag) { shakeMag = mag; }
+// Strong spotlight from above-front — creates the beam effect
+const spot = new THREE.SpotLight(0xffffff, 4.5);
+spot.position.set(0, 16, 4);
+spot.target.position.set(0, 0, 0);
+spot.angle = 0.35;
+spot.penumbra = 0.6;
+spot.castShadow = true;
+spot.shadow.mapSize.setScalar(1024);
+scene.add(spot, spot.target);
 
-// ── Cube target color ──────────────────────────────────
-let targetColor = new THREE.Color(0xe040fb);
-let currentColor = new THREE.Color(0xe040fb);
+// Soft fill from the front-right
+const fill = new THREE.DirectionalLight(0xfff0e0, 0.3);
+fill.position.set(6, 4, 8);
+scene.add(fill);
 
-// ── Cube jump animation ────────────────────────────────
-let cubeVelocity = { x: 0, y: 0 };
-let cubePos      = { x: 0, y: 0 };
+// ── Cube ───────────────────────────────────────────────
+const HALF = 2.5;
+const cubeMat = new THREE.MeshStandardMaterial({
+  color: 0x111118,
+  roughness: 0.18,
+  metalness: 0.55,
+  envMapIntensity: 1,
+});
+const cube = new THREE.Mesh(
+  new THREE.BoxGeometry(HALF*2, HALF*2, HALF*2),
+  cubeMat
+);
+cube.receiveShadow = true;
+cube.castShadow = true;
+scene.add(cube);
 
-function jumpCube(dir) {
-  const force = 2.5;
-  if (dir === 'LEFT')  cubeVelocity.x -= force;
-  if (dir === 'RIGHT') cubeVelocity.x += force;
-  if (dir === 'UP')    cubeVelocity.y += force;
-  if (dir === 'DOWN')  cubeVelocity.y -= force;
-  targetColor.set(COLORS[dir]);
+// ── Beam / God-ray effect ─────────────────────────────
+const beamGeo = new THREE.CylinderGeometry(0.06, 1.2, 14, 12, 1, true);
+const beamMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 0.045,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+});
+const beam = new THREE.Mesh(beamGeo, beamMat);
+beam.position.set(0, HALF + 7, 0);
+scene.add(beam);
+
+// ── Humanoid character ─────────────────────────────────
+const charMat = new THREE.MeshStandardMaterial({
+  color: 0xffffff,
+  roughness: 0.4,
+  metalness: 0.05,
+  emissive: 0xffffff,
+  emissiveIntensity: 0.08,
+});
+
+function makeLimb(rx, ry, rz) {
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(rx, rz, 4, 6), charMat);
+  m.castShadow = true;
+  return m;
+}
+
+const character = new THREE.Group();
+// head
+const head = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 10), charMat);
+head.position.y = 0.76;
+head.castShadow = true;
+character.add(head);
+// body
+const body = makeLimb(0.1, 0.1, 0.28);
+body.position.y = 0.36;
+character.add(body);
+// arms
+const armL = makeLimb(0.055, 0.055, 0.22);
+armL.position.set(-0.2, 0.41, 0);
+armL.rotation.z = 0.45;
+character.add(armL);
+const armR = armL.clone();
+armR.position.set(0.2, 0.41, 0);
+armR.rotation.z = -0.45;
+character.add(armR);
+// legs
+const legL = makeLimb(0.07, 0.07, 0.24);
+legL.position.set(-0.1, 0.04, 0);
+character.add(legL);
+const legR = legL.clone();
+legR.position.set(0.1, 0.04, 0);
+character.add(legR);
+
+character.position.set(0, HALF, 0);
+scene.add(character);
+
+// ── Timer border line ──────────────────────────────────
+// Traces the top face perimeter; depletes as time runs out
+const Y_BORDER = HALF + 0.06;
+const CORNERS = [
+  new THREE.Vector3( HALF, Y_BORDER, -HALF),
+  new THREE.Vector3(-HALF, Y_BORDER, -HALF),
+  new THREE.Vector3(-HALF, Y_BORDER,  HALF),
+  new THREE.Vector3( HALF, Y_BORDER,  HALF),
+  new THREE.Vector3( HALF, Y_BORDER, -HALF),
+];
+const SEG_LEN = [];
+for (let i = 0; i < 4; i++) SEG_LEN.push(CORNERS[i].distanceTo(CORNERS[i+1]));
+const PERIM = SEG_LEN.reduce((a,b)=>a+b,0);
+
+function perimeterPoints(t) {
+  const target = t * PERIM;
+  const pts = [CORNERS[0].clone()];
+  let acc = 0;
+  for (let i = 0; i < 4; i++) {
+    const rem = target - acc;
+    if (rem <= 0) break;
+    if (rem >= SEG_LEN[i]) {
+      pts.push(CORNERS[i+1].clone());
+      acc += SEG_LEN[i];
+    } else {
+      pts.push(CORNERS[i].clone().lerp(CORNERS[i+1], rem / SEG_LEN[i]));
+      break;
+    }
+  }
+  return pts;
+}
+
+// Two lines: a bright outer and a dimmer glow
+function makeTimerLine(col, opacity, linewidth) {
+  const geo = new THREE.BufferGeometry().setFromPoints([CORNERS[0]]);
+  const mat = new THREE.LineBasicMaterial({ color: col, transparent: true, opacity });
+  return new THREE.Line(geo, mat);
+}
+
+const timerLineGlow  = makeTimerLine(0xffffff, 0.3, 1);
+const timerLineOuter = makeTimerLine(0xffffff, 1.0, 1);
+scene.add(timerLineGlow, timerLineOuter);
+
+function setTimerProgress(t) {
+  const pts = perimeterPoints(t);
+  timerLineOuter.geometry.setFromPoints(pts);
+  timerLineOuter.geometry.attributes.position.needsUpdate = true;
+  // glow is slightly larger (scaled)
+  const gpts = pts.map(p => p.clone().multiplyScalar(1.06).setY(Y_BORDER + 0.01));
+  timerLineGlow.geometry.setFromPoints(gpts);
+  timerLineGlow.geometry.attributes.position.needsUpdate = true;
+}
+
+// ── Background floating diamonds ──────────────────────
+const DIAMOND_COUNT = 90;
+const diamonds = [];
+const diamondMat = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 0.07,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+for (let i = 0; i < DIAMOND_COUNT; i++) {
+  const size = 0.1 + Math.random() * 0.55;
+  const geo  = new THREE.PlaneGeometry(size, size);
+  const m    = new THREE.Mesh(geo, diamondMat);
+  m.position.set(
+    (Math.random() - 0.5) * 40,
+    (Math.random() - 0.5) * 28,
+    (Math.random() - 0.5) * 20 - 5
+  );
+  m.rotation.z = Math.PI / 4;
+  m.rotation.x = (Math.random() - 0.5) * 0.3;
+  m.userData.vy    = (Math.random() - 0.5) * 0.012;
+  m.userData.rotv  = (Math.random() - 0.5) * 0.006;
+  m.userData.op    = 0.04 + Math.random() * 0.1;
+  scene.add(m);
+  diamonds.push(m);
+}
+
+// ── Shadow plane below cube ────────────────────────────
+const shadowGeo = new THREE.PlaneGeometry(9, 9);
+const shadowMat = new THREE.MeshBasicMaterial({
+  color: 0x000000,
+  transparent: true,
+  opacity: 0.25,
+  depthWrite: false,
+});
+const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+shadowPlane.rotation.x = -Math.PI / 2;
+shadowPlane.position.y = -HALF - 0.01;
+scene.add(shadowPlane);
+
+// ── Camera shake ──────────────────────────────────────
+let shakePower = 0;
+
+function doShake(power) { shakePower = power; }
+
+// ── World-to-screen projection ─────────────────────────
+const _v3 = new THREE.Vector3();
+
+function project(x, y, z) {
+  _v3.set(x, y, z).project(camera);
+  return {
+    x: (_v3.x * 0.5 + 0.5) * window.innerWidth,
+    y: (-_v3.y * 0.5 + 0.5) * window.innerHeight,
+  };
+}
+
+function positionInstructionOverlay() {
+  if (currentScreen !== 'game') return;
+  const p = project(0, HALF + 0.4, 0);
+  elInstr.style.left = p.x + 'px';
+  elInstr.style.top  = p.y + 'px';
+}
+
+// ── Character bob & jump ──────────────────────────────
+let charVx = 0, charVz = 0;
+const BASE_CHAR_Y = HALF;
+
+function jumpCharacter(dir) {
+  const f = 1.8;
+  if (dir === 'LEFT')  charVx -= f;
+  if (dir === 'RIGHT') charVx += f;
+  if (dir === 'UP')    charVz -= f;
+  if (dir === 'DOWN')  charVz += f;
 }
 
 // ── Animation loop ─────────────────────────────────────
-let clock = new THREE.Clock();
-let frameId;
+const clock = new THREE.Clock();
 
 function animate() {
-  frameId = requestAnimationFrame(animate);
+  requestAnimationFrame(animate);
   const t  = clock.getElapsedTime();
   const dt = clock.getDelta();
 
-  // Rotate rings
-  ring1.rotation.z += 0.003;
-  ring2.rotation.x += 0.002;
-  ring3.rotation.y += 0.0015;
+  // Cube gentle drift
+  cube.rotation.y = Math.sin(t * 0.18) * 0.04;
 
-  // Rotate cube gently
-  mainCube.rotation.x = Math.sin(t * 0.4) * 0.25;
-  mainCube.rotation.y += 0.008;
+  // Character bob
+  character.position.y = BASE_CHAR_Y + Math.sin(t * 2.4) * 0.06;
 
-  // Cube jump physics
-  cubeVelocity.x *= 0.85;
-  cubeVelocity.y *= 0.85;
-  cubePos.x += cubeVelocity.x * 0.06;
-  cubePos.y += cubeVelocity.y * 0.06;
-  cubePos.x *= 0.88;
-  cubePos.y *= 0.88;
-  mainCube.position.x = cubePos.x;
-  mainCube.position.y = cubePos.y;
+  // Character jump drift
+  charVx *= 0.82; charVz *= 0.82;
+  character.position.x += charVx * 0.06;
+  character.position.z += charVz * 0.06;
+  character.position.x *= 0.88;
+  character.position.z *= 0.88;
 
-  // Pulse emissive
-  const pulse = 0.3 + 0.15 * Math.sin(t * 2.5);
-  boxMat.emissiveIntensity = pulse;
+  // Timer update
+  if (accepting) {
+    const elapsed  = performance.now() - timerStart;
+    const progress = Math.max(0, 1 - elapsed / roundMs);
+    setTimerProgress(progress);
 
-  // Lerp cube color
-  currentColor.lerp(targetColor, 0.06);
-  boxMat.color.copy(currentColor);
-  boxMat.emissive.copy(currentColor).multiplyScalar(0.35);
-
-  // Drift particles
-  const pos = pGeo.attributes.position.array;
-  for (let i = 0; i < particleCount; i++) {
-    pos[i * 3 + 1] += pSpeeds[i];
-    if (pos[i * 3 + 1] > 16)  pos[i * 3 + 1] = -16;
-    if (pos[i * 3 + 1] < -16) pos[i * 3 + 1] = 16;
+    // Timer urgency: tint border
+    if (progress < 0.3) {
+      timerLineOuter.material.color.setHex(0xff3060);
+      timerLineGlow.material.color.setHex(0xff3060);
+    } else {
+      timerLineOuter.material.color.setHex(0xffffff);
+      timerLineGlow.material.color.setHex(0xffffff);
+    }
   }
-  pGeo.attributes.position.needsUpdate = true;
+
+  // Diamonds float
+  for (const d of diamonds) {
+    d.position.y += d.userData.vy;
+    d.rotation.z += d.userData.rotv;
+    if (d.position.y >  16) d.position.y = -16;
+    if (d.position.y < -16) d.position.y =  16;
+    // pulse opacity
+    d.material.opacity = d.userData.op * (0.7 + 0.3 * Math.sin(t * 0.8 + d.position.x));
+  }
 
   // Camera shake
-  if (shakeMag > 0.005) {
-    camera.position.x = (Math.random() - 0.5) * shakeMag;
-    camera.position.y = (Math.random() - 0.5) * shakeMag;
-    shakeMag *= shakeDecay;
+  if (shakePower > 0.005) {
+    camera.position.x = Math.sin(t * 60) * shakePower;
+    camera.position.y = 14 + Math.cos(t * 55) * shakePower;
+    shakePower *= 0.84;
   } else {
     camera.position.x = 0;
-    camera.position.y = 0;
+    camera.position.y = 14;
   }
 
   renderer.render(scene, camera);
+  positionInstructionOverlay();
 }
 animate();
+onResize();
+
+// ═══════════════════════════════════════════════════════
+//  SCREENS
+// ═══════════════════════════════════════════════════════
+function showScreen(name) {
+  currentScreen = name;
+  scrStart.classList.remove('active');
+  scrOver.classList.remove('active');
+  elHUD.classList.add('hidden');
+  elInstr.classList.add('hidden');
+  setTimerProgress(0);
+
+  if (name === 'start') scrStart.classList.add('active');
+  if (name === 'over')  scrOver.classList.add('active');
+  if (name === 'game')  {
+    elHUD.classList.remove('hidden');
+    elInstr.classList.remove('hidden');
+  }
+}
 
 // ═══════════════════════════════════════════════════════
 //  GAME LOGIC
 // ═══════════════════════════════════════════════════════
-function showScreen(name) {
-  Object.values(screens).forEach(s => s.classList.remove('active'));
-  screens[name].classList.add('active');
-  state.screen = name;
-}
-
-function showStart() {
-  clearRound();
-  showScreen('start');
-}
-
 function startGame() {
-  state.score     = 0;
-  state.lives     = MAX_LIVES;
-  state.combo     = 1;
-  state.streak    = 0;
-  state.roundTime = BASE_TIME;
+  score    = 0;
+  lives    = MAX_LIVES;
+  roundMs  = BASE_MS;
+  accepting = false;
   updateHUD();
   showScreen('game');
-  setTimeout(nextRound, 400);
+  setTimeout(nextRound, 600);
 }
 
 function updateHUD() {
-  elScore.textContent = state.score;
-  elCombo.textContent = `x${state.combo}`;
-  lifeEls.forEach((el, i) => el.classList.toggle('lost', i >= state.lives));
+  elScore.textContent = score;
+  heartEls.forEach((h, i) => h.classList.toggle('lost', i >= lives));
 }
 
-// ── Generate a round ────────────────────────────────────
+// ── Round generation ───────────────────────────────────
 function nextRound() {
-  if (state.screen !== 'game') return;
+  if (currentScreen !== 'game') return;
 
-  // Number of "Not" prefixes: weight toward simpler early on
-  const maxNots = Math.min(3, Math.floor(state.score / 4));
+  const maxNots  = Math.min(3, 1 + Math.floor(score / 5));
   const notCount = Math.floor(Math.random() * (maxNots + 1));
-
-  // Base direction
-  const base = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)];
-
-  // Resolve: odd nots → opposite, even nots → same
-  const answer = notCount % 2 === 0 ? base : OPPOSITES[base];
-
-  state.answer   = answer;
-  state.accepting = true;
+  const base     = DIRS[Math.floor(Math.random() * DIRS.length)];
+  answer         = notCount % 2 === 0 ? base : OPPOSITE[base];
+  accepting      = true;
+  timerStart     = performance.now();
 
   // Render instruction
   elNots.innerHTML = '';
   for (let i = 0; i < notCount; i++) {
-    const span = document.createElement('span');
-    span.className = 'not-word';
-    span.textContent = 'NOT';
-    // staggered entrance
-    span.style.animationDelay = `${i * 0.06}s`;
-    elNots.appendChild(span);
+    const s = document.createElement('span');
+    s.className = 'not-chip';
+    s.textContent = 'NOT';
+    elNots.appendChild(s);
   }
-  elDir.textContent = base;
 
-  // Animate in
+  // Force re-animate direction
   elDir.style.animation = 'none';
   void elDir.offsetWidth;
   elDir.style.animation = '';
+  elDir.textContent = base;
 
-  // Start timer
-  state.timerStart  = performance.now();
-  scheduleTimeout();
-}
+  positionInstructionOverlay();
+  setTimerProgress(1);
 
-function scheduleTimeout() {
-  clearTimeout(state.timerHandle);
-  state.timerHandle = setTimeout(onTimeout, state.roundTime);
-  animateTimerBar();
-}
-
-function animateTimerBar() {
-  const start = performance.now();
-  const dur   = state.roundTime;
-  function tick() {
-    if (!state.accepting) return;
-    const elapsed = performance.now() - start;
-    const pct     = Math.max(0, 1 - elapsed / dur);
-    elTimerBar.style.width = `${pct * 100}%`;
-
-    // Color urgency
-    if (pct > 0.5)      elTimerBar.style.background = 'linear-gradient(90deg,#40c4ff,#e040fb)';
-    else if (pct > 0.25) elTimerBar.style.background = 'linear-gradient(90deg,#ffd740,#ff6d00)';
-    else                  elTimerBar.style.background = 'linear-gradient(90deg,#ff1744,#ff6d00)';
-
-    if (elapsed < dur && state.accepting) requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
-
-function clearRound() {
-  clearTimeout(state.timerHandle);
-  state.accepting = false;
-  elTimerBar.style.width = '100%';
+  clearTimeout(timerHandle);
+  timerHandle = setTimeout(onTimeout, roundMs);
 }
 
 function onTimeout() {
-  if (!state.accepting) return;
+  if (!accepting) return;
   wrongAnswer();
 }
 
-// ── Answer handling ─────────────────────────────────────
-function submitAnswer(dir) {
-  if (!state.accepting || state.screen !== 'game') return;
-  clearRound();
-
-  if (dir === state.answer) {
-    correctAnswer(dir);
-  } else {
-    wrongAnswer();
-  }
+// ── Answer ─────────────────────────────────────────────
+function submit(dir) {
+  if (!accepting || currentScreen !== 'game') return;
+  accepting = false;
+  clearTimeout(timerHandle);
+  if (dir === answer) correct(dir);
+  else                wrong();
 }
 
-function correctAnswer(dir) {
-  state.score  += state.combo;
-  state.streak += 1;
-
-  if (state.streak > 0 && state.streak % COMBO_THRESHOLD === 0) {
-    state.combo = Math.min(8, state.combo + 1);
-    showComboBurst(`COMBO x${state.combo}!`);
-  }
-
-  state.roundTime = Math.max(MIN_TIME, state.roundTime * TIME_DECAY);
-
-  jumpCube(dir);
-  flashFeedback('correct');
+function correct(dir) {
+  score++;
+  roundMs = Math.max(MIN_MS, roundMs * DECAY);
+  jumpCharacter(dir);
+  flash('ok');
   updateHUD();
-  setTimeout(nextRound, 420);
+  setTimeout(nextRound, 400);
 }
 
-function wrongAnswer() {
-  state.lives  -= 1;
-  state.streak  = 0;
-  state.combo   = 1;
-
-  triggerShake(0.8);
-  flashFeedback('wrong');
-  addShakeClass();
+function wrong() {
+  lives--;
+  doShake(0.55);
+  flash('bad');
+  shakeInstruction();
   updateHUD();
-
-  if (state.lives <= 0) {
-    setTimeout(gameOver, 600);
-  } else {
-    setTimeout(nextRound, 700);
-  }
+  if (lives <= 0) { setTimeout(gameOver, 550); }
+  else            { setTimeout(nextRound, 600); }
 }
+
+function wrongAnswer() { wrong(); }
 
 function gameOver() {
-  clearRound();
-  if (state.score > state.best) state.best = state.score;
-  elFinalScore.textContent = state.score;
-  elBestScore.textContent  = state.best;
+  accepting = false;
+  if (score > best) best = score;
+  elOverScr.textContent = score;
+  elOverBst.textContent = best;
   showScreen('over');
-  targetColor.set(0xe040fb);
 }
 
-function flashFeedback(type) {
-  elFeedback.className = type;
-  setTimeout(() => { elFeedback.className = ''; }, 350);
+function flash(cls) {
+  elFlash.className = '';
+  void elFlash.offsetWidth;
+  elFlash.className = cls;
 }
 
-function addShakeClass() {
-  const el = $('instruction-area');
-  el.classList.remove('shake');
-  void el.offsetWidth;
-  el.classList.add('shake');
-  setTimeout(() => el.classList.remove('shake'), 500);
-}
-
-function showComboBurst(text) {
-  const el = document.createElement('div');
-  el.className   = 'combo-burst';
-  el.textContent = text;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 700);
+function shakeInstruction() {
+  elInstr.classList.remove('shake');
+  void elInstr.offsetWidth;
+  elInstr.classList.add('shake');
+  setTimeout(() => elInstr.classList.remove('shake'), 450);
 }
 
 // ═══════════════════════════════════════════════════════
-//  INPUT HANDLING
+//  SWIPE / INPUT
 // ═══════════════════════════════════════════════════════
-
-// Keyboard
 const KEY_MAP = {
-  ArrowLeft:  'LEFT',  KeyA: 'LEFT',
-  ArrowRight: 'RIGHT', KeyD: 'RIGHT',
-  ArrowUp:    'UP',    KeyW: 'UP',
-  ArrowDown:  'DOWN',  KeyS: 'DOWN',
+  ArrowLeft:'LEFT', KeyA:'LEFT',
+  ArrowRight:'RIGHT', KeyD:'RIGHT',
+  ArrowUp:'UP', KeyW:'UP',
+  ArrowDown:'DOWN', KeyS:'DOWN',
 };
 
 document.addEventListener('keydown', e => {
-  const dir = KEY_MAP[e.code];
-  if (dir) submitAnswer(dir);
+  const d = KEY_MAP[e.code];
+  if (d) { e.preventDefault(); submit(d); }
 });
 
-// Touch / swipe
-let touchStart = null;
-const SWIPE_THRESHOLD = 30;
+// Touch swipe
+let touchOrigin = null;
+const SWIPE_MIN = 28;
 
 document.addEventListener('touchstart', e => {
-  touchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  if (e.target.closest('button')) return;
+  touchOrigin = { x: e.touches[0].clientX, y: e.touches[0].clientY };
 }, { passive: true });
 
 document.addEventListener('touchend', e => {
-  if (!touchStart) return;
-  const dx = e.changedTouches[0].clientX - touchStart.x;
-  const dy = e.changedTouches[0].clientY - touchStart.y;
-  touchStart = null;
-  if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
+  if (!touchOrigin) return;
+  const dx = e.changedTouches[0].clientX - touchOrigin.x;
+  const dy = e.changedTouches[0].clientY - touchOrigin.y;
+  touchOrigin = null;
+
+  if (Math.abs(dx) < SWIPE_MIN && Math.abs(dy) < SWIPE_MIN) return;
 
   let dir;
-  if (Math.abs(dx) > Math.abs(dy)) {
-    dir = dx > 0 ? 'RIGHT' : 'LEFT';
-  } else {
-    dir = dy > 0 ? 'DOWN' : 'UP';
-  }
-  submitAnswer(dir);
+  if (Math.abs(dx) > Math.abs(dy)) dir = dx > 0 ? 'RIGHT' : 'LEFT';
+  else                              dir = dy > 0 ? 'DOWN'  : 'UP';
+  submit(dir);
 }, { passive: true });
 
-// ── On-screen arrow buttons for fallback (mobile) ──────
-const arrowWrap = document.createElement('div');
-arrowWrap.id = 'arrow-buttons';
-arrowWrap.innerHTML = `
-  <div style="grid-column:2;grid-row:1"><button data-dir="UP">↑</button></div>
-  <div style="grid-column:1;grid-row:2"><button data-dir="LEFT">←</button></div>
-  <div style="grid-column:2;grid-row:2"><button data-dir="DOWN">↓</button></div>
-  <div style="grid-column:3;grid-row:2"><button data-dir="RIGHT">→</button></div>
-`;
-Object.assign(arrowWrap.style, {
-  position: 'fixed',
-  bottom:   '2rem',
-  left:     '50%',
-  transform:'translateX(-50%)',
-  display:  'grid',
-  gridTemplateColumns: 'repeat(3,3.5rem)',
-  gridTemplateRows:    'repeat(2,3.5rem)',
-  gap:      '0.4rem',
-  zIndex:   '15',
-  opacity:  '0',
-  transition:'opacity 0.3s',
+// Pointer drag (desktop + non-touch mobile)
+let pointerOrigin = null;
+const DRAG_MIN = 30;
+
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch') return; // handled above
+  pointerOrigin = { x: e.clientX, y: e.clientY };
 });
 
-arrowWrap.querySelectorAll('button').forEach(btn => {
-  Object.assign(btn.style, {
-    width:        '100%',
-    height:       '100%',
-    border:       '2px solid rgba(255,255,255,0.25)',
-    borderRadius: '12px',
-    background:   'rgba(255,255,255,0.07)',
-    color:        '#fff',
-    fontSize:     '1.5rem',
-    cursor:       'pointer',
-    backdropFilter:'blur(4px)',
-    transition:   'background 0.1s, transform 0.1s',
-  });
-  btn.addEventListener('pointerdown', () => {
-    btn.style.background = 'rgba(255,255,255,0.18)';
-    btn.style.transform  = 'scale(0.93)';
-    submitAnswer(btn.dataset.dir);
-  });
-  btn.addEventListener('pointerup', () => {
-    btn.style.background = 'rgba(255,255,255,0.07)';
-    btn.style.transform  = 'scale(1)';
-  });
+window.addEventListener('pointerup', e => {
+  if (!pointerOrigin || e.pointerType === 'touch') return;
+  const dx = e.clientX - pointerOrigin.x;
+  const dy = e.clientY - pointerOrigin.y;
+  pointerOrigin = null;
+  if (Math.abs(dx) < DRAG_MIN && Math.abs(dy) < DRAG_MIN) return;
+
+  let dir;
+  if (Math.abs(dx) > Math.abs(dy)) dir = dx > 0 ? 'RIGHT' : 'LEFT';
+  else                              dir = dy > 0 ? 'DOWN'  : 'UP';
+  submit(dir);
 });
 
-document.body.appendChild(arrowWrap);
-
-// Show arrow buttons only on the game screen
-const gameScreenEl = $('screen-game');
-const observer = new MutationObserver(() => {
-  const active = gameScreenEl.classList.contains('active');
-  arrowWrap.style.opacity = active ? '1' : '0';
-  arrowWrap.style.pointerEvents = active ? 'all' : 'none';
-});
-observer.observe(gameScreenEl, { attributes: true, attributeFilter: ['class'] });
+// Initial screen
+showScreen('start');
